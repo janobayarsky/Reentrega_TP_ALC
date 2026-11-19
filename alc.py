@@ -6,14 +6,15 @@ __all__ = [
     #"calculaLDV",
     "norma",
     "calcularAx",
-    "prodVect",
+    "productoPunto",
     #"metpot2k",
     #"diagRH",
     "svd_reducida",
     "QR_con_GS",
     "res_tri",
     "inversa",
-    "calculaCholesky"
+    "calculaCholesky",
+    "prodVectorial",
 ]
 
 def multiplicarMatrices(A,B):
@@ -114,7 +115,7 @@ def f_k(A, v, k):
     return v
 
 
-def prodVect(v,w):
+def productoPunto(v,w):
   n = len(v)
   suma = 0
   for i in range(n):
@@ -130,9 +131,9 @@ def metpot2k(A,tol=1e-15,K=1000):
   while abs(e - 1) > tol and k < K:
     v = v_p
     v_p = f_k(A,v,2)
-    e = prodVect(v_p,v)
+    e = productoPunto(v_p,v)
     k += 1
-  lamb = prodVect(v_p.T, calcularAx(A,v_p))
+  lamb = productoPunto(v_p.T, calcularAx(A,v_p))
   eps = e - 1
   return v, lamb, k, eps
 
@@ -270,3 +271,9 @@ def calculaCholesky(A):
     L,D,L = calculaLDV(A)
     D_raiz = np.diag(np.sqrt(np.diag(D)))
     return multiplicarMatrices(L,D_raiz)
+
+def prodVectorial(v,u):
+    p = np.array([v[1]*u[2]-v[2]*u[1],
+                  v[2]*u[0]-v[0]*u[2],
+                  v[0]*u[1]-v[1]*u[0]])
+    return p
