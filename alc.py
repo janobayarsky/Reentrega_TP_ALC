@@ -1,4 +1,5 @@
 import numpy as np
+import cv2
 
 __all__ = [
     "multiplicarMatrices",
@@ -15,7 +16,22 @@ __all__ = [
     "inversa",
     "calculaCholesky",
     "prodVectorial",
+    "obtener_uv_con_M",
+    "obtenerQ2d",
+    "obtenerQ3d",
+    "resolverDLT3D",
+    "devolverMatricesCalibracion3d",
+    "proyectar",
+    "dibujar_circulo",
+    "resolver2D",
+    "distGolEnzo",
+    "error_reproy",
+    "armarA",
+    "obtenerPose2D",
+    "calcularMatrizK2D",
+    "obtener_velocidad_kmh"
 ]
+
 
 def multiplicarMatrices(A,B):
     filasA,columnasA = A.shape
@@ -30,6 +46,7 @@ def multiplicarMatrices(A,B):
                 suma += A[i][k] * B[k][j]
             M[i][j] = suma
     return M
+
 
 def calculaLU(A):
     if A is None:
@@ -56,6 +73,7 @@ def calculaLU(A):
 
     return L, U, cant_op
 
+
 def calculaLDV(A):
   n = A.shape[0]
   D = np.eye(n)
@@ -70,6 +88,7 @@ def calculaLDV(A):
   # Arriba calculo la inversa directamente, Me quede V = D^-1@V
   V = multiplicarMatrices(D_inv, U)
   return L,D,V
+
 
 def norma(x,p):
     max = 0
@@ -92,6 +111,7 @@ def norma(x,p):
       resultado[j] = norma(x[:,j],p)
     return resultado
 
+
 def calcularAx(A, v):
     w = np.zeros((A.shape[0]))
     for i in range(A.shape[0]):
@@ -102,12 +122,14 @@ def calcularAx(A, v):
         w[i] = sum_row
     return w
 
+
 def f(A, v):
     w = calcularAx(A, v)
     norm = norma(w,2)
     if norm > 0:
         w = w/norm
     return w
+
 
 def f_k(A, v, k):
     for i in range(k):
@@ -121,6 +143,7 @@ def productoPunto(v,w):
   for i in range(n):
     suma += v[i]*w[i]
   return suma
+
 
 def metpot2k(A,tol=1e-15,K=1000):
   fil,col = A.shape
@@ -136,6 +159,7 @@ def metpot2k(A,tol=1e-15,K=1000):
   lamb = productoPunto(v_p.T, calcularAx(A,v_p))
   eps = e - 1
   return v, lamb, k, eps
+
 
 def diagRH(A,tol=1e-15,K=1000):
   fil,col = A.shape
@@ -158,6 +182,7 @@ def diagRH(A,tol=1e-15,K=1000):
     S[1:,1:] = S_2
     S = H_v1 @ S
     return S, D
+
 
 def svd_reducida(A, k="max", tol=1e-15):
 
@@ -235,6 +260,7 @@ def QR_con_GS(A):
     R[j,j] = norma_qj
   return Q,R
 
+
 def res_tri(L,b, inferior=True):
   n = L.shape[0]
   x = np.zeros(n)
@@ -267,13 +293,500 @@ def inversa(A):
     A_inv[:,i] = x
   return A_inv
 
+
 def calculaCholesky(A):
     L,D,L = calculaLDV(A)
     D_raiz = np.diag(np.sqrt(np.diag(D)))
     return multiplicarMatrices(L,D_raiz)
+
 
 def prodVectorial(v,u):
     p = np.array([v[1]*u[2]-v[2]*u[1],
                   v[2]*u[0]-v[0]*u[2],
                   v[0]*u[1]-v[1]*u[0]])
     return p
+
+
+def obtener_uv_con_M(K,R,t,puntos):
+    Rt = np.column_stack((R,t))
+    M = multiplicarMatrices(K,Rt)
+    uv = multiplicarMatrices(M,puntos).T
+    uv = (uv / uv[:, -1:])[:,0:2]
+    return uv
+
+
+def obtenerQ2d(imgPts, objPts):
+    n = len(objPts)
+    uv = np.asarray(imgPts).reshape(n, 2)
+    Q = np.zeros((n*2,9))
+
+    for i in range(n):
+        P = np.append(objPts[i], 1)
+        u , v = uv[i]
+        Q[2*i,0:3] = P
+        Q[2*i,6:9] = -u*P
+
+        Q[2*i+1,3:6] = P
+        Q[2*i+1,6:9] = -v*P
+
+    return Q
+
+
+def resolver2D(Q):
+    U, sigma, V = svd_reducida(Q)
+    m = V.T[-1] #ultima fila de V traspuesta, seria la ultima columna de V
+    return m.reshape(3,3)
+
+
+def calcularV(H, i, j):
+    v = np.array([
+        H[0,i]*H[0,j],
+        H[0,i]*H[1,j] + H[1,i]*H[0,j],
+        H[1,i]*H[1,j],
+        H[2,i]*H[0,j] + H[0,i]*H[2,j],
+        H[2,i]*H[1,j] + H[1,i]*H[2,j],
+        H[2,i]*H[2,j]
+    ])
+    return v
+
+
+def armarA(Hlst):
+
+    n = len(Hlst)
+    A = np.zeros((2*n,6))
+    j = 0
+    for H in Hlst:
+        v12 = calcularV(H,0,1)
+        v11 = calcularV(H,0,0)
+        v22 = calcularV(H,1,1)
+        V = np.array([v12,v11-v22])
+
+        A[2*j : 2*j+2,:] = V
+        j = j + 1
+
+    return A
+
+
+def calcularMatrizK2D(A):
+    U, S, V = svd_reducida(A, tol=1e-20)
+    b = V[:,-1] # la transpongo para quedarme con la ultima columna de V
+                 # el cual me da el valor singular minimo
+    B = np.array([
+                [b[0],b[1],b[3]],
+                [b[1],b[2],b[4]],
+                [b[3],b[4],b[5]]
+                ])
+
+    # Intentar corregir el signo de B
+
+    #if np.all(autovalores < 0):
+    #    B = -B
+    autovalores = np.linalg.eigvalsh(B)
+
+    if np.all(autovalores < 0):
+        B = -B
+
+    L = calculaCholesky(B)
+
+    K = np.linalg.inv(L.T)
+    K = K / K[2,2]
+    return K
+
+
+def obtenerPose2D(Hj,K):
+    K_inv = inversa(K)
+    lamb = 1/ norma(productoPunto(K_inv,Hj[:,0]),2)
+    r1 = lamb*(productoPunto(K_inv,Hj[:,0]))
+    r2 = lamb*(productoPunto(K_inv,Hj[:,1]))
+    r3 = prodVectorial(r1,r2)
+    R_t = np.array([r1,r2,r3])
+    R = R_t.T
+
+    tj = lamb*(productoPunto(K_inv,Hj[:,2]))
+
+    return R, tj
+
+
+def distGolEnzo(pt,H):
+    p = np.array([pt[0],pt[1],1])
+    U,V, W  = calcularAx(inversa(H), p)
+    x, y = U / W, V/W
+    return np.sqrt((105-x)**2+(34-y)**2)
+
+
+def proyectar(H, x, y):
+    q = calcularAx(H , np.array([x, y, 1.0]))
+    return q[0] / q[2], q[1] / q[2]       # (u, v) en píxeles
+
+
+def dibujar_circulo(img, H, cx, cy, color=(0, 255, 0), grosor=2):
+    t = np.linspace(0,2*np.pi, 60)
+    pts = [proyectar(H,cx+1*np.cos(a),cy+1*np.sin(a))for a in t]
+    pts = np.array(pts,dtype=np.int32)
+    cv2.polylines(img,[pts],True,color,grosor)
+
+
+def resolverDLT3D(Q):
+    U, sigma, V = svd_reducida(Q)
+    m = V.T[-1] #ultima fila de V traspuesta, seria la ultima columna de V
+    M = m.reshape(3,4)
+    return M
+
+
+def devolverMatricesCalibracion3d(M, misma_focal=False, sin_skew=False):
+    J = np.array([
+    [0, 0, 1],
+    [0, 1, 0],
+    [1, 0, 0]
+    ])
+
+    A = M[:,:3].copy()
+    b = M[:,3].copy()
+    B = multiplicarMatrices(J,multiplicarMatrices(A.T,J))
+
+    Q, R = QR_con_GS(B)
+
+    K = multiplicarMatrices(J,multiplicarMatrices(R.T,J))
+
+    # Ajustamos signos de la diagonal de K
+    D = np.diag(np.sign(np.diag(K)))
+    K = multiplicarMatrices(K, D) # para que quede positiva
+
+    # Normalizamos K[2,2] = 1
+    escala = K[2, 2]
+    K = K / escala
+    A = A / escala
+    b = b / escala
+
+    # Restricciones sobre K
+    if misma_focal:
+        f = (K[0,0]+K[1,1])/2 # tomo la media para no alejarme de sus valores originales
+        K[0,0] = K[1,1] = f
+
+    if sin_skew:
+        K[0,1] = 0
+
+    # Teniendo la K definitiva, calculamos
+    C = multiplicarMatrices(inversa(K), A)
+    U, sigma, V = svd_reducida(C)
+    R_hat = multiplicarMatrices(U, V.T)
+    t = calcularAx(inversa(K), b)
+
+    # Corregimos el signo pidiendo que el det sea <0, ya que solo puede ser -1 o 1. Pero los valores no son exactos, asi que si es <0 tiene det cercano a -1
+    if np.linalg.det(R_hat) < 0:
+        R_hat = -R_hat
+        t = -t
+
+    return R_hat, t, K
+
+
+def error_reproy(uv_calc, u_real, v_real):
+    uv_real = np.column_stack((u_real, v_real))
+    d = np.sqrt(np.sum((uv_calc - uv_real)**2, axis=1))
+    return d.mean(), d.max()
+
+
+def obtener_velocidad_kmh(puntos_px, H, segs):
+    inv_H = inversa(H)
+    # Pasamos de puntos de la imagen a puntos reales, y agregamos 1 al final
+    puntos_reales = np.array([calcularAx(inv_H, np.append(punto, 1)) for punto in puntos_px])
+    puntos_reales = puntos_reales / puntos_reales[:,2:3]
+
+    # Calculamos el vector desplazamiento entre un punto y el siguiente, para todos los puntos
+    desplazamientos = np.diff(puntos_reales, axis=0)
+
+    # Pasamos los vectores desplazamiento a un número a traves de la norma
+    metros_recorridos = norma(desplazamientos.T, 2)
+
+    # Calculamos la variación de tiempo entre una imagen y la otra, para todas las imagenes
+    variaciones_tiempo = np.diff(segs)
+
+    # Calculamos la velocidad como la distancia recorrida entre el tiempo transcurrido
+    velocidades_ms = metros_recorridos / variaciones_tiempo
+    velocidades_kmh = velocidades_ms * 3.6
+
+    return velocidades_kmh
+
+
+def calculoLambdaMu(I_plano, J_plano):
+    # Recibe los vectores del plano y devuelve sus correcciones normales
+
+    # Condicion de igualdad de normas
+    dif_normas = norma(J_plano, 2)**2 - norma(I_plano, 2)**2
+
+    # Condicion de ortogonalidad
+    prod_cruzado = -2 * np.sum(I_plano * J_plano)
+
+    # Resolvemos el sistema para obtener lambda y mu
+    modulo = np.sqrt(dif_normas**2 + prod_cruzado**2)
+
+    lamb = np.sqrt(max(0, (modulo + dif_normas) / 2))
+    mu = np.sqrt(max(0, (modulo - dif_normas) / 2))
+
+    # Ajustamos el signo de mu
+    if prod_cruzado < 0:
+        mu = -mu
+
+    return float(lamb), float(mu)
+
+
+def calcularSalidaPOSIT(I_completo, J_completo, fx, pixel_ref_centrado, punto_ref_real):
+    # Recibe los vectores completos, la focal y el punto de referencia
+    # Devuelve los ejes, la profundidad y la pose de la camara  
+
+    # Recuperamos la profundidad del punto de referencia
+    Z0 = fx / norma(I_completo, 2)
+
+    # Normalizamos los dos primeros ejes
+    i = I_completo / norma(I_completo, 2)
+    j = J_completo / norma(J_completo, 2)
+
+    # Obtenemos el tercer eje mediante el producto vectorial
+    k = np.array([
+        i[1]*j[2] - i[2]*j[1],
+        i[2]*j[0] - i[0]*j[2],
+        i[0]*j[1] - i[1]*j[0]
+    ])
+
+    R = np.array([i, j, k])
+
+    # Recuperamos las coordenadas del punto de referencia en la camara
+    x_ref_cam = (Z0 / fx) * pixel_ref_centrado[0]
+    y_ref_cam = (Z0 / fx) * pixel_ref_centrado[1]
+
+    punto_ref_cam = np.array([x_ref_cam, y_ref_cam, Z0])
+
+    # Despejamos la traslacion de punto_ref_cam = R * punto_ref_real + t
+    punto_ref_rotado = multiplicarMatrices(
+        R, punto_ref_real.reshape(3, 1)
+    ).reshape(3)
+
+    t = punto_ref_cam - punto_ref_rotado
+
+    return i, j, k, Z0, R, t
+
+
+def evaluarPose(R, t, puntos_reales, puntos_px, K):
+    # Recibe una pose y las correspondencias entre puntos reales y pixeles
+    # Devuelve la cantidad de proyecciones validas y el RMS
+
+    n = len(puntos_reales)
+
+    profundidades = np.zeros(n)
+    uv_calculados = np.zeros((n, 2))
+
+    for p in range(n):
+
+        # Pasamos de coordenadas reales a coordenadas de la camara
+        punto_cam = multiplicarMatrices(
+            R, puntos_reales[p].reshape(3, 1)
+        ).reshape(3) + t
+
+        profundidades[p] = punto_cam[2]
+
+        # Proyectamos solamente los puntos delante de la camara
+        if profundidades[p] > 0:
+
+            pixel_homog = multiplicarMatrices(
+                K, punto_cam.reshape(3, 1)
+            ).reshape(3)
+
+            u_calc = pixel_homog[0] / pixel_homog[2]
+            v_calc = pixel_homog[1] / pixel_homog[2]
+
+            uv_calculados[p] = np.array([u_calc, v_calc])
+
+    # Contamos las proyecciones validas
+    validas = int(np.sum(profundidades > 0))
+
+    # Descartamos la pose si algun punto no esta delante de la camara
+    if validas < n:
+        return validas, float("inf")
+
+    # Calculamos el RMS entre los pixeles calculados y los observados
+    error_cuadrado = np.sum(
+        (uv_calculados - puntos_px)**2, axis=1
+    )
+
+    rms = np.sqrt(np.sum(error_cuadrado) / n)
+
+    return validas, float(rms)
+
+
+def aplicarPOSIT(puntos_reales, puntos_px, K, MaxIt, atol):
+    # Recibe las correspondencias, los intrinsecos y los limites de iteracion
+    # Devuelve la pose con menor RMS encontrada mediante POSIT
+
+    n = len(puntos_reales)
+
+    # Extraemos las focales y las coordenadas del punto principal
+    fx = K[0, 0]
+    fy = K[1, 1]
+    cx = K[0, 2]
+    cy = K[1, 2]
+
+    # Centramos los pixeles e igualamos las escalas de ambos ejes
+    u_centrado = puntos_px[:, 0] - cx
+    v_centrado = (puntos_px[:, 1] - cy) * fx / fy
+
+    # Elegimos el primer punto como referencia
+    punto_ref_real = puntos_reales[0]
+
+    pixel_ref_centrado = np.array([
+        u_centrado[0], v_centrado[0]
+    ])
+
+    # Construimos los vectores relativos al punto de referencia
+    vecs_relativos = puntos_reales - punto_ref_real
+
+    A = vecs_relativos[1:]
+
+    # Trabajamos sobre las dos dimensiones del plano
+    A_plano = A[:, :2]
+
+    A_traspuesta = A_plano.T
+
+    # Calculamos la pseudoinversa para resolver por cuadrados minimos
+    A_pinv = multiplicarMatrices(
+        inversa(multiplicarMatrices(A_traspuesta, A_plano)),
+        A_traspuesta
+    )
+
+    normal_plano = np.array([0.0, 0.0, 1.0])
+
+    # Inicialmente ignoramos las diferencias de profundidad
+    epsilon = np.zeros(n - 1)
+
+    rms_anterior = float("inf")
+    rms_min = float("inf")
+
+    R_mejor = None
+    t_mejor = None
+
+    for iteracion in range(MaxIt):
+
+        # Corregimos la perspectiva utilizando epsilon
+        b_u = u_centrado[1:] * (1 + epsilon) - u_centrado[0]
+        b_v = v_centrado[1:] * (1 + epsilon) - v_centrado[0]
+
+        # Resolvemos los sistemas por cuadrados minimos
+        I_xy = multiplicarMatrices(
+            A_pinv, b_u.reshape(-1, 1)
+        ).reshape(2)
+
+        J_xy = multiplicarMatrices(
+            A_pinv, b_v.reshape(-1, 1)
+        ).reshape(2)
+
+        I_plano = np.array([I_xy[0], I_xy[1], 0.0])
+        J_plano = np.array([J_xy[0], J_xy[1], 0.0])
+
+        # Calculamos las componentes normales faltantes
+        lamb, mu = calculoLambdaMu(I_plano, J_plano)
+
+        rms_actual = float("inf")
+
+        # Evaluamos las dos soluciones posibles
+        for signo in [1, -1]:
+
+            I_completo = I_plano + signo * lamb * normal_plano
+            J_completo = J_plano + signo * mu * normal_plano
+
+            # Recuperamos la pose correspondiente a la solucion
+            i, j, k, Z0, R, t = calcularSalidaPOSIT(
+                I_completo,
+                J_completo,
+                fx,
+                pixel_ref_centrado,
+                punto_ref_real
+            )
+
+            # Evaluamos las proyecciones y el error de la pose
+            validas, rms = evaluarPose(
+                R, t, puntos_reales, puntos_px, K
+            )
+
+            # Conservamos la mejor pose valida de esta iteracion
+            if validas == n and rms < rms_actual:
+
+                R_actual = R
+                t_actual = t
+                k_actual = k
+                Z0_actual = Z0
+                rms_actual = rms
+
+        # Finalizamos si ninguna solucion es valida
+        if rms_actual == float("inf"):
+            break
+
+        # Guardamos la mejor pose de todas las iteraciones
+        if rms_actual < rms_min:
+
+            R_mejor = R_actual
+            t_mejor = t_actual
+            rms_min = rms_actual
+
+        # Finalizamos si el RMS deja de mejorar suficientemente
+        mejora_rms = rms_anterior - rms_actual
+
+        if mejora_rms < atol:
+            break
+
+        # Actualizamos epsilon con las diferencias de profundidad
+        for p in range(n - 1):
+
+            epsilon[p] = np.sum(
+                A[p] * k_actual
+            ) / Z0_actual
+
+        rms_anterior = rms_actual
+
+    if R_mejor is None:
+        raise ValueError("No se encontro una pose valida")
+
+    return R_mejor, t_mejor
+
+
+def obtenerPoseObjetivo(R, t):
+    # Recibe la pose actual y devuelve la pose objetivo del drone
+
+    # Calculamos la posicion real de la camara
+    centro_camara = -multiplicarMatrices(
+        R.T, t.reshape(3, 1)
+    ).reshape(3)
+
+    # Conservamos la altura actual y centramos la camara sobre la H
+    altura = centro_camara[2]
+
+    centro_objetivo = np.array([0.0, 0.0, altura])
+
+    # Orientamos la camara hacia abajo con la H en posicion vertical
+    R_objetivo = np.array([
+        [1.0, 0.0, 0.0],
+        [0.0, -1.0, 0.0],
+        [0.0, 0.0, -1.0]
+    ])
+
+    # Calculamos la traslacion correspondiente a la posicion objetivo
+    t_objetivo = -multiplicarMatrices(
+        R_objetivo, centro_objetivo.reshape(3, 1)
+    ).reshape(3)
+
+    return R_objetivo, t_objetivo
+
+
+def obtenerQ3d(imgPts, objPts):
+    n = len(objPts)
+    uv = np.asarray(imgPts).reshape(n, 2)
+    Q = np.zeros((n*2,12))
+
+    for i in range(n):
+        P = np.append(objPts[i], 1)
+        u , v = uv[i]
+        Q[2*i,0:4] = P
+        Q[2*i,8:12] = -u*P
+
+        Q[2*i+1,4:8] = P
+        Q[2*i+1,8:12] = -v*P
+
+    return Q
