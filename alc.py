@@ -517,15 +517,15 @@ def obtener_velocidad_kmh(puntos_px, H, segs):
 def calculoLambdaMu(I_plano, J_plano):
     dif_normas = norma(J_plano, 2)**2 - norma(I_plano, 2)**2
 
-    prod_cruzado = -2 * np.sum(I_plano * J_plano)
+    menos_doble_producto = -2 * productoPunto(I_plano, J_plano)
 
-    modulo = np.sqrt(dif_normas**2 + prod_cruzado**2)
+    modulo = np.sqrt(dif_normas**2 + menos_doble_producto**2)
 
     lamb = np.sqrt(max(0, (modulo + dif_normas) / 2))
     mu = np.sqrt(max(0, (modulo - dif_normas) / 2))
 
     # Ajustamos el signo de mu
-    if prod_cruzado < 0:
+    if menos_doble_producto < 0:
         mu = -mu
 
     return float(lamb), float(mu)
@@ -546,7 +546,7 @@ def calcularSalidaPOSIT(I_completo, J_completo, fx, pixel_ref_centrado, punto_re
 
     punto_ref_cam = np.array([x_ref_cam, y_ref_cam, Z0])
 
-    punto_ref_rotado = multiplicarMatrices(R, punto_ref_real.reshape(3, 1)).reshape(3)
+    punto_ref_rotado = calcularAx(R, punto_ref_real)
 
     t = punto_ref_cam - punto_ref_rotado
 
@@ -560,19 +560,12 @@ def evaluarPose(R, t, puntos_reales, puntos_px, K):
     uv_calculados = np.zeros((n, 2))
 
     for p in range(n):
-
-        punto_cam = multiplicarMatrices(R, puntos_reales[p].reshape(3, 1)).reshape(3) + t
-
+        punto_cam = calcularAx(R, puntos_reales[p]) + t
         profundidades[p] = punto_cam[2]
 
         if profundidades[p] > 0:
-
-            pixel_homog = multiplicarMatrices(K, punto_cam.reshape(3, 1)).reshape(3)
-
-            u_calc = pixel_homog[0] / pixel_homog[2]
-            v_calc = pixel_homog[1] / pixel_homog[2]
-
-            uv_calculados[p] = np.array([u_calc, v_calc])
+            pixel_homog = calcularAx(K, punto_cam)
+            uv_calculados[p] = pixel_homog[:2] / pixel_homog[2]
 
     validas = int(np.sum(profundidades > 0))
 
@@ -590,11 +583,11 @@ def aplicarPOSIT(puntos_reales, puntos_px, K, MaxIt, atol):
     n = len(puntos_reales)
     fx = K[0, 0]
     fy = K[1, 1]
-    cx = K[0, 2]
-    cy = K[1, 2]
+    cu = K[0, 2]
+    cv = K[1, 2]
 
-    u_centrado = puntos_px[:, 0] - cx
-    v_centrado = (puntos_px[:, 1] - cy) * fx / fy
+    u_centrado = puntos_px[:, 0] - cu
+    v_centrado = (puntos_px[:, 1] - cv) * fx / fy
 
     punto_ref_real = puntos_reales[0]
 
@@ -625,8 +618,8 @@ def aplicarPOSIT(puntos_reales, puntos_px, K, MaxIt, atol):
         b_u = u_centrado[1:] * (1 + epsilon) - u_centrado[0]
         b_v = v_centrado[1:] * (1 + epsilon) - v_centrado[0]
 
-        I_xy = multiplicarMatrices(A_pinv, b_u.reshape(-1, 1)).reshape(2)
-        J_xy = multiplicarMatrices(A_pinv, b_v.reshape(-1, 1)).reshape(2)
+        I_xy = calcularAx(A_pinv, b_u)
+        J_xy = calcularAx(A_pinv, b_v)
 
         I_plano = np.array([I_xy[0], I_xy[1], 0.0])
         J_plano = np.array([J_xy[0], J_xy[1], 0.0])
@@ -673,7 +666,7 @@ def aplicarPOSIT(puntos_reales, puntos_px, K, MaxIt, atol):
             break
 
         for p in range(n - 1):
-            epsilon[p] = np.sum(A[p] * k_actual) / Z0_actual
+            epsilon[p] = productoPunto(A[p], k_actual) / Z0_actual
 
         rms_anterior = rms_actual
 
@@ -684,7 +677,7 @@ def aplicarPOSIT(puntos_reales, puntos_px, K, MaxIt, atol):
 
 
 def obtenerPoseObjetivo(R, t):
-    centro_camara = -multiplicarMatrices(R.T, t.reshape(3, 1)).reshape(3)
+    centro_camara = -calcularAx(R.T, t)
 
     altura = centro_camara[2]
 
@@ -695,8 +688,8 @@ def obtenerPoseObjetivo(R, t):
         [0.0, -1.0, 0.0],
         [0.0, 0.0, -1.0]
     ])
-
-    t_objetivo = -multiplicarMatrices(R_objetivo, centro_objetivo.reshape(3, 1)).reshape(3)
+    
+    t_objetivo = -calcularAx(R_objetivo, centro_objetivo)
 
     return R_objetivo, t_objetivo
 
