@@ -515,15 +515,10 @@ def obtener_velocidad_kmh(puntos_px, H, segs):
 
 
 def calculoLambdaMu(I_plano, J_plano):
-    # Recibe los vectores del plano y devuelve sus correcciones normales
-
-    # Condicion de igualdad de normas
     dif_normas = norma(J_plano, 2)**2 - norma(I_plano, 2)**2
 
-    # Condicion de ortogonalidad
     prod_cruzado = -2 * np.sum(I_plano * J_plano)
 
-    # Resolvemos el sistema para obtener lambda y mu
     modulo = np.sqrt(dif_normas**2 + prod_cruzado**2)
 
     lamb = np.sqrt(max(0, (modulo + dif_normas) / 2))
@@ -537,35 +532,21 @@ def calculoLambdaMu(I_plano, J_plano):
 
 
 def calcularSalidaPOSIT(I_completo, J_completo, fx, pixel_ref_centrado, punto_ref_real):
-    # Recibe los vectores completos, la focal y el punto de referencia
-    # Devuelve los ejes, la profundidad y la pose de la camara  
-
-    # Recuperamos la profundidad del punto de referencia
     Z0 = fx / norma(I_completo, 2)
-
-    # Normalizamos los dos primeros ejes
+    
     i = I_completo / norma(I_completo, 2)
     j = J_completo / norma(J_completo, 2)
 
-    # Obtenemos el tercer eje mediante el producto vectorial
-    k = np.array([
-        i[1]*j[2] - i[2]*j[1],
-        i[2]*j[0] - i[0]*j[2],
-        i[0]*j[1] - i[1]*j[0]
-    ])
+    k = prodVectorial(i, j)
 
     R = np.array([i, j, k])
 
-    # Recuperamos las coordenadas del punto de referencia en la camara
     x_ref_cam = (Z0 / fx) * pixel_ref_centrado[0]
     y_ref_cam = (Z0 / fx) * pixel_ref_centrado[1]
 
     punto_ref_cam = np.array([x_ref_cam, y_ref_cam, Z0])
 
-    # Despejamos la traslacion de punto_ref_cam = R * punto_ref_real + t
-    punto_ref_rotado = multiplicarMatrices(
-        R, punto_ref_real.reshape(3, 1)
-    ).reshape(3)
+    punto_ref_rotado = multiplicarMatrices(R, punto_ref_real.reshape(3, 1)).reshape(3)
 
     t = punto_ref_cam - punto_ref_rotado
 
@@ -573,9 +554,6 @@ def calcularSalidaPOSIT(I_completo, J_completo, fx, pixel_ref_centrado, punto_re
 
 
 def evaluarPose(R, t, puntos_reales, puntos_px, K):
-    # Recibe una pose y las correspondencias entre puntos reales y pixeles
-    # Devuelve la cantidad de proyecciones validas y el RMS
-
     n = len(puntos_reales)
 
     profundidades = np.zeros(n)
@@ -583,36 +561,25 @@ def evaluarPose(R, t, puntos_reales, puntos_px, K):
 
     for p in range(n):
 
-        # Pasamos de coordenadas reales a coordenadas de la camara
-        punto_cam = multiplicarMatrices(
-            R, puntos_reales[p].reshape(3, 1)
-        ).reshape(3) + t
+        punto_cam = multiplicarMatrices(R, puntos_reales[p].reshape(3, 1)).reshape(3) + t
 
         profundidades[p] = punto_cam[2]
 
-        # Proyectamos solamente los puntos delante de la camara
         if profundidades[p] > 0:
 
-            pixel_homog = multiplicarMatrices(
-                K, punto_cam.reshape(3, 1)
-            ).reshape(3)
+            pixel_homog = multiplicarMatrices(K, punto_cam.reshape(3, 1)).reshape(3)
 
             u_calc = pixel_homog[0] / pixel_homog[2]
             v_calc = pixel_homog[1] / pixel_homog[2]
 
             uv_calculados[p] = np.array([u_calc, v_calc])
 
-    # Contamos las proyecciones validas
     validas = int(np.sum(profundidades > 0))
 
-    # Descartamos la pose si algun punto no esta delante de la camara
     if validas < n:
         return validas, float("inf")
 
-    # Calculamos el RMS entre los pixeles calculados y los observados
-    error_cuadrado = np.sum(
-        (uv_calculados - puntos_px)**2, axis=1
-    )
+    error_cuadrado = np.sum((uv_calculados - puntos_px)**2, axis=1)
 
     rms = np.sqrt(np.sum(error_cuadrado) / n)
 
@@ -620,47 +587,31 @@ def evaluarPose(R, t, puntos_reales, puntos_px, K):
 
 
 def aplicarPOSIT(puntos_reales, puntos_px, K, MaxIt, atol):
-    # Recibe las correspondencias, los intrinsecos y los limites de iteracion
-    # Devuelve la pose con menor RMS encontrada mediante POSIT
-
     n = len(puntos_reales)
-
-    # Extraemos las focales y las coordenadas del punto principal
     fx = K[0, 0]
     fy = K[1, 1]
     cx = K[0, 2]
     cy = K[1, 2]
 
-    # Centramos los pixeles e igualamos las escalas de ambos ejes
     u_centrado = puntos_px[:, 0] - cx
     v_centrado = (puntos_px[:, 1] - cy) * fx / fy
 
-    # Elegimos el primer punto como referencia
     punto_ref_real = puntos_reales[0]
 
-    pixel_ref_centrado = np.array([
-        u_centrado[0], v_centrado[0]
-    ])
+    pixel_ref_centrado = np.array([u_centrado[0], v_centrado[0]])
 
-    # Construimos los vectores relativos al punto de referencia
     vecs_relativos = puntos_reales - punto_ref_real
 
     A = vecs_relativos[1:]
 
-    # Trabajamos sobre las dos dimensiones del plano
     A_plano = A[:, :2]
 
     A_traspuesta = A_plano.T
 
-    # Calculamos la pseudoinversa para resolver por cuadrados minimos
-    A_pinv = multiplicarMatrices(
-        inversa(multiplicarMatrices(A_traspuesta, A_plano)),
-        A_traspuesta
-    )
+    A_pinv = multiplicarMatrices(inversa(multiplicarMatrices(A_traspuesta, A_plano)),A_traspuesta)
 
     normal_plano = np.array([0.0, 0.0, 1.0])
-
-    # Inicialmente ignoramos las diferencias de profundidad
+    
     epsilon = np.zeros(n - 1)
 
     rms_anterior = float("inf")
@@ -671,34 +622,24 @@ def aplicarPOSIT(puntos_reales, puntos_px, K, MaxIt, atol):
 
     for iteracion in range(MaxIt):
 
-        # Corregimos la perspectiva utilizando epsilon
         b_u = u_centrado[1:] * (1 + epsilon) - u_centrado[0]
         b_v = v_centrado[1:] * (1 + epsilon) - v_centrado[0]
 
-        # Resolvemos los sistemas por cuadrados minimos
-        I_xy = multiplicarMatrices(
-            A_pinv, b_u.reshape(-1, 1)
-        ).reshape(2)
-
-        J_xy = multiplicarMatrices(
-            A_pinv, b_v.reshape(-1, 1)
-        ).reshape(2)
+        I_xy = multiplicarMatrices(A_pinv, b_u.reshape(-1, 1)).reshape(2)
+        J_xy = multiplicarMatrices(A_pinv, b_v.reshape(-1, 1)).reshape(2)
 
         I_plano = np.array([I_xy[0], I_xy[1], 0.0])
         J_plano = np.array([J_xy[0], J_xy[1], 0.0])
 
-        # Calculamos las componentes normales faltantes
         lamb, mu = calculoLambdaMu(I_plano, J_plano)
 
         rms_actual = float("inf")
 
-        # Evaluamos las dos soluciones posibles
         for signo in [1, -1]:
 
             I_completo = I_plano + signo * lamb * normal_plano
             J_completo = J_plano + signo * mu * normal_plano
 
-            # Recuperamos la pose correspondiente a la solucion
             i, j, k, Z0, R, t = calcularSalidaPOSIT(
                 I_completo,
                 J_completo,
@@ -707,12 +648,8 @@ def aplicarPOSIT(puntos_reales, puntos_px, K, MaxIt, atol):
                 punto_ref_real
             )
 
-            # Evaluamos las proyecciones y el error de la pose
-            validas, rms = evaluarPose(
-                R, t, puntos_reales, puntos_px, K
-            )
+            validas, rms = evaluarPose(R, t, puntos_reales, puntos_px, K)
 
-            # Conservamos la mejor pose valida de esta iteracion
             if validas == n and rms < rms_actual:
 
                 R_actual = R
@@ -721,29 +658,22 @@ def aplicarPOSIT(puntos_reales, puntos_px, K, MaxIt, atol):
                 Z0_actual = Z0
                 rms_actual = rms
 
-        # Finalizamos si ninguna solucion es valida
         if rms_actual == float("inf"):
             break
 
-        # Guardamos la mejor pose de todas las iteraciones
         if rms_actual < rms_min:
 
             R_mejor = R_actual
             t_mejor = t_actual
             rms_min = rms_actual
-
-        # Finalizamos si el RMS deja de mejorar suficientemente
+            
         mejora_rms = rms_anterior - rms_actual
 
         if mejora_rms < atol:
             break
 
-        # Actualizamos epsilon con las diferencias de profundidad
         for p in range(n - 1):
-
-            epsilon[p] = np.sum(
-                A[p] * k_actual
-            ) / Z0_actual
+            epsilon[p] = np.sum(A[p] * k_actual) / Z0_actual
 
         rms_anterior = rms_actual
 
@@ -754,29 +684,19 @@ def aplicarPOSIT(puntos_reales, puntos_px, K, MaxIt, atol):
 
 
 def obtenerPoseObjetivo(R, t):
-    # Recibe la pose actual y devuelve la pose objetivo del drone
+    centro_camara = -multiplicarMatrices(R.T, t.reshape(3, 1)).reshape(3)
 
-    # Calculamos la posicion real de la camara
-    centro_camara = -multiplicarMatrices(
-        R.T, t.reshape(3, 1)
-    ).reshape(3)
-
-    # Conservamos la altura actual y centramos la camara sobre la H
     altura = centro_camara[2]
 
     centro_objetivo = np.array([0.0, 0.0, altura])
 
-    # Orientamos la camara hacia abajo con la H en posicion vertical
     R_objetivo = np.array([
         [1.0, 0.0, 0.0],
         [0.0, -1.0, 0.0],
         [0.0, 0.0, -1.0]
     ])
 
-    # Calculamos la traslacion correspondiente a la posicion objetivo
-    t_objetivo = -multiplicarMatrices(
-        R_objetivo, centro_objetivo.reshape(3, 1)
-    ).reshape(3)
+    t_objetivo = -multiplicarMatrices(R_objetivo, centro_objetivo.reshape(3, 1)).reshape(3)
 
     return R_objetivo, t_objetivo
 
