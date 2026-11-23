@@ -29,7 +29,7 @@ __all__ = [
     "armarA",
     "obtenerPose2D",
     "calcularMatrizK2D",
-    "obtener_velocidad_kmh"
+    "obtener_velocidad_kmh",
     "calculoLambdaMu",
     "calcularSalidaPOSIT",
     "evaluarPose",
