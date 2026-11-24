@@ -145,7 +145,7 @@ def metpot2k(A,tol=1e-15,K=1000):
   fil,col = A.shape
   v = np.random.rand(fil)
   v_p = f_k(A,v,2)
-  e = v_p.T @ v
+  e = multiplicarMatrices(v_p.T,v)
   k = 0
   while abs(e - 1) > tol and k < K:
     v = v_p
@@ -162,13 +162,13 @@ def diagRH(A,tol=1e-15,K=1000):
   v1, lamb1, _, _ = metpot2k(A,tol,K)
   I = np.eye(fil)
   u = (I[:,0]-v1).reshape(-1, 1)
-  H_v1 = I-2*(u@u.T)/(u.T@u)
+  H_v1 = I-2*(multiplicarMatrices(u,u.T))/(multiplicarMatrices(u.T,u))
   if fil == 2:
     S = H_v1
-    D = H_v1 @ A @ H_v1.T
+    D = multiplicarMatrices(H_v1, multiplicarMatrices(A,H_v1.T))
     return S,D
   else:
-    B = H_v1 @ A @ H_v1.T
+    B = multiplicarMatrices(H_v1, multiplicarMatrices (A,H_v1.T))
     A_2 = B[1:fil,1:fil]
     S_2, D_2 =  diagRH(A_2,tol,K)
     D = np.zeros((fil,fil))
@@ -176,7 +176,7 @@ def diagRH(A,tol=1e-15,K=1000):
     D[1:,1:] = D_2
     S = np.eye(fil)
     S[1:,1:] = S_2
-    S = H_v1 @ S
+    S = multiplicarMatrices(H_v1,S)
     return S, D
 
 
@@ -249,7 +249,7 @@ def QR_con_GS(A):
   for j in range(1,fil):
     Q[:,j] = A[:,j]
     for k in range(j):
-      R[k,j] = Q[:,k].T@Q[:,j]
+      R[k,j] = multiplicarMatrices(Q[:,k].T,Q[:,j])
       Q[:,j] -= R[k,j]*Q[:,k]
     norma_qj = norma(Q[:,j],2)
     Q[:,j] = Q[:,j]/norma_qj
@@ -394,13 +394,16 @@ def armarA(Hlst):
 
     return A
 
+def det3(R):
+    return (R[0,0]*(R[1,1]*R[2,2]-R[1,2]*R[2,1])
+          - R[0,1]*(R[1,0]*R[2,2]-R[1,2]*R[2,0])
+          + R[0,2]*(R[1,0]*R[2,1]-R[1,1]*R[2,0]))
+
 def esDefinidaPositiva(B):
     #Criterio de Sylvester: los 3 menores principales deben tener determinante mayor estricto a 0. Calculamos el determinante a mano:
     m1 = B[0,0]
     m2 = B[0,0]*B[1,1] - B[0,1]*B[1,0]
-    m3 = (B[0,0]*(B[1,1]*B[2,2] - B[1,2]*B[2,1])
-        - B[0,1]*(B[1,0]*B[2,2] - B[1,2]*B[2,0])
-        + B[0,2]*(B[1,0]*B[2,1] - B[1,1]*B[2,0]))
+    m3 = det3(B)
     return m1 > 0 and m2 > 0 and m3 > 0
 
 def calcularMatrizK2D(A):
@@ -416,8 +419,6 @@ def calcularMatrizK2D(A):
                 [b[1],b[2],b[4]],
                 [b[3],b[4],b[5]]
                 ])
-
-    autovalores = np.linalg.eigvalsh(B)
 
     if esDefinidaPositiva(B):
        pass
@@ -585,7 +586,7 @@ def devolverMatricesCalibracion3d(M, misma_focal=False, sin_skew=False):
     t = calcularAx(inversa(K), b)
 
     # Corregimos el signo pidiendo que el det sea <0, ya que solo puede ser -1 o 1. Pero los valores no son exactos, asi que si es <0 tiene det cercano a -1
-    if np.linalg.det(R_hat) < 0:
+    if det3(R_hat) < 0:
         R_hat = -R_hat
         t = -t
 
