@@ -301,9 +301,9 @@ def inversa(A):
 
 
 def calculaCholesky(A):
-    L,D,L = calculaLDV(A)
+    L, D, V = calculaLDV(A)
     D_raiz = np.diag(np.sqrt(np.diag(D)))
-    return multiplicarMatrices(L,D_raiz)
+    return multiplicarMatrices(L, D_raiz)
 
 
 def prodVectorial(v,u):
@@ -339,9 +339,16 @@ def obtenerQ2d(imgPts, objPts):
 
 
 def resolver2D(Q):
-    U, sigma, V = svd_reducida(Q)
-    m = V.T[-1] #ultima fila de V traspuesta, seria la ultima columna de V
-    return m.reshape(3,3)
+    QtQ = multiplicarMatrices(Q.T, Q)
+    V, D = diagRH(QtQ)
+    # Buscamos el autovalor más cercano a cero en la diagonal de D
+    pos = 0
+    for i in range(1, len(D)):
+        if abs(D[i, i]) < abs(D[pos, pos]):
+            pos = i
+    # La columna correspondiente de V contiene los 9 coeficientes de H
+    h = V[:, pos]
+    return h.reshape(3, 3)
 
 
 def calcularV(H, i, j):
@@ -434,40 +441,37 @@ def calcularMatrizK2D(A):
     return K
 
 
-def obtenerPose2D(Hj,K):
-    # Una vez calculada la homografía de la vista y la matriz K para atodas las vistas,
-    # podemos obtener los parametros extrínsecos de la vista j (Rj y tj).
-    # Llamamos a las columnas de Hj c1,c2,c3.
-    # Decimos que lambda = 1 / norma de K^c1 = 1 / s
-    # Las columas de R las obtenemos de la siguiente forma: r1 = lambda K^-1 c1,
-    # r1 = lambda K^-1 c2, y r3 = r1 x r2 (producto cruz, para obtener un vector ortogonal a r1 y r2).
-    # Construimos Rj como las columnas que calculamos, y tj = lambda K^-1 c3.
+def obtenerPose2D(Hj, K):
+    """Recibe la homografía de una vista y K. Devuelve la rotación R y la traslación tj."""
     K_inv = inversa(K)
-    c1 = productoPunto(K_inv,Hj[:,0])
-    c2 = productoPunto(K_inv,Hj[:,1])
-    c3 = productoPunto(K_inv,Hj[:,2])
-    lamb = 1/ norma(c1,2)
-    r1 = lamb*(c1)
-    r2 = lamb*(c2)
-    r3 = prodVectorial(r1,r2)
-    R = np.array([r1,r2,r3]).T
+    c1 = calcularAx(K_inv, Hj[:,0])
+    c2 = calcularAx(K_inv, Hj[:,1])
+    c3 = calcularAx(K_inv, Hj[:,2])
 
-    # Al igual que antes, buscamos que R sea ortogonal, asi que buscamos la matriz ortogonal que mejor la paroxima.
-    # Esto se resuelve calculando la SVD de R, obteniendo U Sigma V.T, e imponer que Sigma = Identidad.
-    # La R nueva será U V.T, que al ser producto de ortogonales es ortogonal.
+    # Elegimos la escala para que r1 tenga norma 1 y el origen quede frente a la cámara
+    lamb = 1 / norma(c1, 2)
+    if c3[2] < 0:
+        lamb = -lamb
+
+    r1 = lamb * c1
+    r2 = lamb * c2
+    r3 = prodVectorial(r1, r2)
+    R = np.array([r1, r2, r3]).T
+    tj = lamb * c3
+
+    # Ajustamos la rotación porque los puntos medidos en la foto tienen ruido
     U, Sigma, V = svd_reducida(R)
-    R = multiplicarMatrices(U,V.T)
-    
-    tj = lamb*(c3)
+    R = multiplicarMatrices(U, V.T)
 
     return R, tj
 
 
-def distGolEnzo(pt,H):
-    p = np.array([pt[0],pt[1],1])
-    U,V, W  = calcularAx(inversa(H), p)
-    x, y = U / W, V/W
-    return np.sqrt((105-x)**2+(34-y)**2)
+def distGolEnzo(pt, H):
+    p = np.array([pt[0], pt[1], 1])
+    U, V, W = calcularAx(inversa(H), p)
+    x = U / W
+    # La línea del arco está en x = 105 metros
+    return abs(105 - x)
 
 
 def proyectar(H, x, y):
