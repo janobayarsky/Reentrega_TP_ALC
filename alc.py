@@ -215,7 +215,7 @@ def svd_reducida(A, k="max", tol=1e-15):
     V = V[:, idx]
 
     # Eliminar autovalores nulos
-    mask = autoval > tol
+    mask = abs(autoval) > tol
 
     autoval = autoval[mask]
     V = V[:, mask]
@@ -357,6 +357,20 @@ def calcularV(H, i, j):
 
 
 def armarA(Hlst):
+    # Tenemos que cada H = (c1|c2|c3) = sK(r1|r2|t), por lo que
+    # c1=sKr1, c2=sKr2. Al despejarlas, queda que
+    # r1 = 1/s K^-1 c1, r2 = 1/s K^-1 c2, siendo r1 y r2 columnas de rotacion.
+    # Por esta prop, r1.T r2 = 0, r1.T r1 = r2.T r2 = 1
+    # Se define B = K^-t K^-1, y las expresiones de antes se convierten en
+    # c1.T B c1 - c2.T B c2 = 0, c1.T B c2 = 0.
+    # Cada homografía aporta exactamente dos ecuaciones linelaes en las 6 componentes independientes de B.
+    # Las incognitas dependen de K y los valores de las columnas de H.
+    # Una vez obtenidas las Hj, se encuentra K planteando Ab=0, donde se expresa 
+    # b = [B11 B12 B22 B13 B23 B33].T
+    # Se define vij, para las columnas ci,cj de H tal que ci.T B cj = vij.T b, y se obtiene
+    # v12.T b = 0, (v11 - v22).T b = 0, que corresponden a dos filas de A.
+    # Las otras filas de A se arman con las homografias de todas las vistas.
+    # Se apilan las 2n ecuaciones de n vistas para obtener A.
 
     n = len(Hlst)
     A = np.zeros((2*n,6))
@@ -372,43 +386,78 @@ def armarA(Hlst):
 
     return A
 
+def esDefinidaPositiva(B):
+    #Criterio de Sylvester: los 3 menores principales deben tener determinante mayor estricto a 0. Calculamos el determinante a mano:
+    m1 = B[0,0]
+    m2 = B[0,0]*B[1,1] - B[0,1]*B[1,0]
+    m3 = (B[0,0]*(B[1,1]*B[2,2] - B[1,2]*B[2,1])
+        - B[0,1]*(B[1,0]*B[2,2] - B[1,2]*B[2,0])
+        + B[0,2]*(B[1,0]*B[2,1] - B[1,1]*B[2,0]))
+    return m1 > 0 and m2 > 0 and m3 > 0
 
 def calcularMatrizK2D(A):
+
     U, S, V = svd_reducida(A, tol=1e-20)
-    b = V[:,-1] # la transpongo para quedarme con la ultima columna de V
-                 # el cual me da el valor singular minimo
+    b = V[:,-1] 
+
+    # b es la sol que minimiza la norma de Ab, que al igual que en el caso de m, es la ultima columna
+    # de la matriz V de la SVD de A. Se elije el signo de B que hace que B quede DP.
+
     B = np.array([
                 [b[0],b[1],b[3]],
                 [b[1],b[2],b[4]],
                 [b[3],b[4],b[5]]
                 ])
 
-    # Intentar corregir el signo de B
-
-    #if np.all(autovalores < 0):
-    #    B = -B
     autovalores = np.linalg.eigvalsh(B)
 
+    if not esDefinidaPositiva(B):
+        raise ValueError("B no es definida positiva: revisar homografías / cantidad de vistas")
+    
+    # un criterio para ver que la matriz sea DP es que todos sus autovalores sean positivos. Si son todos negativos, cambiamos su signo
     if np.all(autovalores < 0):
         B = -B
 
+    # A partir de B, se usa la factorizacion de Cholesky B=L L.T, y como 
+    # B = K^-T K^-1, con K^-1 triangular superior (ya que K era triangular superior), 
+    # se tiene que L = K^-T, es decir K = L.T^-1. Se normaliza K dividiendo por K33 para que quede K33=1.
+    # Verificamos que B sea definida positiva antes de aplicar Cholesky, para que la función avise si algo sale mal,
+    # en vez de devolver una K inválida
+
     L = calculaCholesky(B)
 
-    K = np.linalg.inv(L.T)
+
+
+    K = inversa(L.T)
     K = K / K[2,2]
     return K
 
 
 def obtenerPose2D(Hj,K):
+    # Una vez calculada la homografía de la vista y la matriz K para atodas las vistas,
+    # podemos obtener los parametros extrínsecos de la vista j (Rj y tj).
+    # Llamamos a las columnas de Hj c1,c2,c3.
+    # Decimos que lambda = 1 / norma de K^c1 = 1 / s
+    # Las columas de R las obtenemos de la siguiente forma: r1 = lambda K^-1 c1,
+    # r1 = lambda K^-1 c2, y r3 = r1 x r2 (producto cruz, para obtener un vector ortogonal a r1 y r2).
+    # Construimos Rj como las columnas que calculamos, y tj = lambda K^-1 c3.
     K_inv = inversa(K)
-    lamb = 1/ norma(productoPunto(K_inv,Hj[:,0]),2)
-    r1 = lamb*(productoPunto(K_inv,Hj[:,0]))
-    r2 = lamb*(productoPunto(K_inv,Hj[:,1]))
+    c1 = productoPunto(K_inv,Hj[:,0])
+    c2 = productoPunto(K_inv,Hj[:,1])
+    c3 = productoPunto(K_inv,Hj[:,2])
+    lamb = 1/ norma(c1,2)
+    r1 = lamb*(c1)
+    r2 = lamb*(c2)
     r3 = prodVectorial(r1,r2)
-    R_t = np.array([r1,r2,r3])
-    R = R_t.T
+    R = np.array([r1,r2,r3]).T
 
-    tj = lamb*(productoPunto(K_inv,Hj[:,2]))
+    # Al igual que antes, buscamos que R sea ortogonal, asi que buscamos la matriz ortogonal que mejor la paroxima.
+    # Esto se resuelve calculando la SVD de R, obteniendo U Sigma V.T, e imponer que Sigma = Identidad.
+    # La R nueva será U V.T, que al ser producto de ortogonales es ortogonal.
+    U, Sigma, V = svd_reducida(R)
+    R = multiplicarMatrices(U,V.T)
+    
+    tj = lamb*(c3)
 
     return R, tj
 
@@ -440,6 +489,8 @@ def resolverDLT3D(Q):
 
 
 def devolverMatricesCalibracion3d(M, misma_focal=False, sin_skew=False):
+    # Matriz de permutación que si se multiplica por derecha intercambia la primera col con la tercera, 
+    # y si se multiplica por izquierda intercambia la primera fila con la tercera. Al hacer JAJ, se hacen ambas operaciones
     J = np.array([
     [0, 0, 1],
     [0, 1, 0],
@@ -448,6 +499,17 @@ def devolverMatricesCalibracion3d(M, misma_focal=False, sin_skew=False):
 
     A = M[:,:3].copy()
     b = M[:,3].copy()
+
+    # Tenemos que M=(A|b)=K(R|t)=(KR|Kt), asi que A=KR, con K triangular superior y R ortogonal. Si factorizamos A con QR queda
+    # QR = KR, pero Q y la segunda R son ortogonales, y la primera R y K son triangulares superiores. Queremos que KR aparezcan al reves.
+    # Decimos que A.T=R.T K.T, y multiplicamos por matrices de permutacion ya que K.T es triangular inferior, y queremos que vuelva a ser
+    # triangular superior. Al hacer estas operaciones, queda que J A.T J = J R.T K.T J = (J R.T J)(J K.T J), ya que como
+    # J es una matriz de permutacion, es ortogonal (JJ=I). El primer parentesis es ortogonal, y el segundo triangular superior.
+    # Factorizamos J A.T J = B, y queda B = Qgs Rgs. Qgs = (J R.T J), y Rgs = (J K.T J).
+    # De esta forma, K.T = J Rgs J (ya que la inversa de J es J), y K = J Rgs.T J.
+    # Calculada K, le hacemos las modificaciones correspondientes (skew y focal), y obtenemos R y t.
+    # Se tiene que b = Kt, y obtenemos t multiplicando K^-1 b.
+
     B = multiplicarMatrices(J,multiplicarMatrices(A.T,J))
 
     Q, R = QR_con_GS(B)
@@ -472,7 +534,28 @@ def devolverMatricesCalibracion3d(M, misma_focal=False, sin_skew=False):
     if sin_skew:
         K[0,1] = 0
 
-    # Teniendo la K definitiva, calculamos
+    # Teniendo la K definitiva, calculamos R y t.
+    # Como originalmente R = K^-1 A era ortogonal, al modificar K se puede perder esta propiedad. 
+    # Llamamos C = K^-1 A. Queremos la matriz R ortogonal que minimice la norma al cuadrado de C-R. Descomponemos C con una SVD, C= U Sigma V.T
+    # La norma de C-R = norma (U sigma V.T - R) = norma (U.T(U sigma V.T - R)V), ya que al multiplicar una matriz ortogonal se mantiene la norma.
+    # Volviendo a la norma nos queda la norma al cuadrado de Sigma - U.T R V, y llamo Z = U.T R V. Como U,R y V son ortogonales, Z tambien lo será,
+    # Ya que el producto de ortogonales es ortogonal. 
+    # Aplicando una norma Frobenius, que es igual a la raiz de la suma de cada elemento elevado al cuadrado de la matriz.
+    # Cumple que la norma F al cuadrado de una matriz M es igual a la traza de M^t M.
+    # De esta forma, la norma al cuadrado de Sigma - Z es igual a la traza de (Sigma - Z).T (Sigma - Z).
+    # Distribuyendo, queda la traza de (Sigma.T Sigma) - 2 traza (Sigma.T Z) + traza de(Z Z.T).
+    # El primer término, es tomar la traza de la matriz que tiene en la diagonal los valores singulares al cuadrado.
+    # El tercer es la traza de la matriz identidad, ya que Z es ortogonal.
+    # La segunda traza es igual a la sumatoria de valor singular i Zii, con i entre 1 y 3.
+    # Como se quiere minimizar la norma, y el segundo término es negativo, se quiere maximizarlo, que seria achicar la norma.
+    # Como Z es ortogonal, cada columna tiene norma 1, o sea que ningun elemento puede ser mayor a 1 en modulo.
+    # Como queremos que sea lo mas grande posible positivo, y los sigma son positivos, entonces el max valor de la sumatoria se obtiene
+    # tomando los elementos de la diagonal de Z iguales a 1 positivo. Dada esta elección, el resto de valores de la matriz Z deben ser iguales a 0,
+    # ya que si alguno fuera mayor a 0 en modulo, ya no se cumpliría la norma 1. Determinamos que Z = I maximiza esta norma.
+    # Volviendo a la expresión norma al cuadrado de Sigma - U.T R V, vimos que este segundo término (que habíamos llamado Z), debe ser igual al a identidad.
+    # Despejando, se llega a que R = U I V.T = U V.T.
+    # Concluimos que para obtener la matriz R de rotación mas cercana a K^-1 A, debemos hallar la SVD de esta expresión, y la R que buscamos será hacer U V.T.
+
     C = multiplicarMatrices(inversa(K), A)
     U, sigma, V = svd_reducida(C)
     R_hat = multiplicarMatrices(U, V.T)
