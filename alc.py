@@ -411,12 +411,13 @@ def calcularMatrizK2D(A):
 
     autovalores = np.linalg.eigvalsh(B)
 
-    if not esDefinidaPositiva(B):
-        raise ValueError("B no es definida positiva: revisar homografías / cantidad de vistas")
-    
+    if esDefinidaPositiva(B):
+       pass
     # un criterio para ver que la matriz sea DP es que todos sus autovalores sean positivos. Si son todos negativos, cambiamos su signo
-    if np.all(autovalores < 0):
+    elif esDefinidaPositiva(-B):
         B = -B
+    else:
+        raise ValueError("B no es definida positiva: revisar homografías / cantidad de vistas")
 
     # A partir de B, se usa la factorizacion de Cholesky B=L L.T, y como 
     # B = K^-T K^-1, con K^-1 triangular superior (ya que K era triangular superior), 
