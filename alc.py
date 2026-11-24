@@ -404,8 +404,15 @@ def esDefinidaPositiva(B):
 
 def calcularMatrizK2D(A):
 
-    U, S, V = svd_reducida(A, tol=1e-20)
-    b = V[:,-1] 
+AtA = multiplicarMatrices(A.T, A)
+V, D = diagRH(AtA)
+
+pos = 0
+for i in range(1, len(D)):
+    if abs(D[i, i]) < abs(D[pos, pos]):
+        pos = i
+
+b = V[:, pos] 
 
     # b es la sol que minimiza la norma de Ab, que al igual que en el caso de m, es la ultima columna
     # de la matriz V de la SVD de A. Se elije el signo de B que hace que B quede DP.
