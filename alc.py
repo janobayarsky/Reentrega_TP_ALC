@@ -3,19 +3,10 @@ import cv2
 
 __all__ = [
     "multiplicarMatrices",
-    #"calculaLU",
-    #"calculaLDV",
-    "norma",
     "calcularAx",
-    "productoPunto",
-    #"metpot2k",
-    #"diagRH",
     "svd_reducida",
     "QR_con_GS",
-    "res_tri",
     "inversa",
-    "calculaCholesky",
-    "prodVectorial",
     "obtener_uv_con_M",
     "obtenerQ2d",
     "obtenerQ3d",
@@ -35,7 +26,6 @@ __all__ = [
     "evaluarPose",
     "aplicarPOSIT",
     "obtenerPoseObjetivo"    
-    
 ]
 
 
@@ -301,9 +291,9 @@ def inversa(A):
 
 
 def calculaCholesky(A):
-    L,D,L = calculaLDV(A)
+    L, D, V = calculaLDV(A)
     D_raiz = np.diag(np.sqrt(np.diag(D)))
-    return multiplicarMatrices(L,D_raiz)
+    return multiplicarMatrices(L, D_raiz)
 
 
 def prodVectorial(v,u):
@@ -339,10 +329,28 @@ def obtenerQ2d(imgPts, objPts):
 
 
 def resolver2D(Q):
-    U, sigma, V = svd_reducida(Q)
-    m = V.T[-1] #ultima fila de V traspuesta, seria la ultima columna de V
-    return m.reshape(3,3)
+    # U, sigma, V = svd_reducida(Q)
+    # m = V.T[-1] #ultima fila de V traspuesta, seria la ultima columna de V
+    # return m.reshape(3,3)
 
+    # como svd_reucida descarta autovalores de Q.T Q, 
+    # mejor calculamos los autovalores de Q.T Q usando diagRH.
+    # Este método, factoriza la matriz en S D S.T. la diag de D son los autovalores,
+    # y S son los autovectores como columna. Nuestro método busca el autovector asociado al autovalor mas chico, 
+    # así que la matriz S de diagRH cumple esto. No necesitamos la SVD. 
+    # Es mejor evitar usarla para no descartar valores singulares (mask = abs(autoval) > tol).
+    # Llamamos V a la S de diagRH ya que corresponde a los autovalores de Q.T Q, que coincide con V de la SVD.
+
+    QtQ = multiplicarMatrices(Q.T, Q)
+    V, D = diagRH(QtQ)
+    # Buscamos el autovalor más cercano a cero en la diagonal de D. No están ordenados como en la SVD, así que recorremos todos
+    pos = 0 
+    for i in range(1, len(D)):
+        if abs(D[i, i]) < abs(D[pos, pos]):
+            pos = i
+    # La columna correspondiente de V contiene los 9 coeficientes de H
+    h = V[:, pos]
+    return h.reshape(3, 3)
 
 def calcularV(H, i, j):
     v = np.array([
@@ -440,34 +448,48 @@ def obtenerPose2D(Hj,K):
     # Llamamos a las columnas de Hj c1,c2,c3.
     # Decimos que lambda = 1 / norma de K^c1 = 1 / s
     # Las columas de R las obtenemos de la siguiente forma: r1 = lambda K^-1 c1,
-    # r1 = lambda K^-1 c2, y r3 = r1 x r2 (producto cruz, para obtener un vector ortogonal a r1 y r2).
+    # r2 = lambda K^-1 c2, y r3 = r1 x r2 (producto cruz, para obtener un vector ortogonal a r1 y r2).
     # Construimos Rj como las columnas que calculamos, y tj = lambda K^-1 c3.
     K_inv = inversa(K)
-    c1 = productoPunto(K_inv,Hj[:,0])
-    c2 = productoPunto(K_inv,Hj[:,1])
-    c3 = productoPunto(K_inv,Hj[:,2])
-    lamb = 1/ norma(c1,2)
-    r1 = lamb*(c1)
-    r2 = lamb*(c2)
+
+    Kinv_c1 = calcularAx(K_inv, Hj[:,0])
+    Kinv_c2 = calcularAx(K_inv, Hj[:,1])
+    Kinv_c3 = calcularAx(K_inv, Hj[:,2])
+
+
+    lamb = 1/ norma(Kinv_c1,2)
+
+    # La homografía se estima salvo un factor de escala, que puede ser negativo. 
+    # Elegimos el signo de λ que deja al tablero delante de la cámara, 
+    # porque la otra solución ubicaría al tablero detrás del plano imagen y no es físicamente válida.
+
+    if Kinv_c3[2] < 0:
+        lamb = -lamb
+
+
+    r1 = lamb*(Kinv_c1)
+    r2 = lamb*(Kinv_c2)
     r3 = prodVectorial(r1,r2)
     R = np.array([r1,r2,r3]).T
 
     # Al igual que antes, buscamos que R sea ortogonal, asi que buscamos la matriz ortogonal que mejor la paroxima.
     # Esto se resuelve calculando la SVD de R, obteniendo U Sigma V.T, e imponer que Sigma = Identidad.
     # La R nueva será U V.T, que al ser producto de ortogonales es ortogonal.
+    # r1 x r2 no cambia si multiplicamos a r1 y a r2 por -1, por lo que R queda igual
     U, Sigma, V = svd_reducida(R)
     R = multiplicarMatrices(U,V.T)
     
-    tj = lamb*(c3)
+    tj = lamb*(Kinv_c3)
 
     return R, tj
 
 
-def distGolEnzo(pt,H):
-    p = np.array([pt[0],pt[1],1])
-    U,V, W  = calcularAx(inversa(H), p)
-    x, y = U / W, V/W
-    return np.sqrt((105-x)**2+(34-y)**2)
+def distGolEnzo(pt, H):
+    p = np.array([pt[0], pt[1], 1])
+    U, V, W = calcularAx(inversa(H), p)
+    x = U / W
+    # La línea del arco está en x = 105 metros, y buscamos la distancia en linea recta desde enzo hacia ella. 
+    return abs(105 - x)
 
 
 def proyectar(H, x, y):
