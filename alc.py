@@ -145,7 +145,7 @@ def metpot2k(A,tol=1e-15,K=1000):
   fil,col = A.shape
   v = np.random.rand(fil)
   v_p = f_k(A,v,2)
-  e = multiplicarMatrices(v_p.T,v)
+  e = productoPunto(v_p,v)
   k = 0
   while abs(e - 1) > tol and k < K:
     v = v_p
@@ -249,7 +249,7 @@ def QR_con_GS(A):
   for j in range(1,fil):
     Q[:,j] = A[:,j]
     for k in range(j):
-      R[k,j] = multiplicarMatrices(Q[:,k].T,Q[:,j])
+      R[k,j] = productoPunto(Q[:,k],Q[:,j])
       Q[:,j] -= R[k,j]*Q[:,k]
     norma_qj = norma(Q[:,j],2)
     Q[:,j] = Q[:,j]/norma_qj
@@ -407,12 +407,17 @@ def esDefinidaPositiva(B):
     return m1 > 0 and m2 > 0 and m3 > 0
 
 def calcularMatrizK2D(A):
+    AtA = multiplicarMatrices(A.T, A)
+    V, D = diagRH(AtA)
 
-    U, S, V = svd_reducida(A, tol=1e-20)
-    b = V[:,-1] 
+    # Buscamos el autovalor más cercano a cero.
+    pos = 0
+    for i in range(1, len(D)):
+        if abs(D[i,i]) < abs(D[pos,pos]):
+            pos = i
 
-    # b es la sol que minimiza la norma de Ab, que al igual que en el caso de m, es la ultima columna
-    # de la matriz V de la SVD de A. Se elije el signo de B que hace que B quede DP.
+    b = V[:,pos]
+
 
     B = np.array([
                 [b[0],b[1],b[3]],
@@ -434,9 +439,13 @@ def calcularMatrizK2D(A):
     # Verificamos que B sea definida positiva antes de aplicar Cholesky, para que la función avise si algo sale mal,
     # en vez de devolver una K inválida
 
+    #Elegimos el b que permite aplicar Cholesky.
+    if not esDefinidaPositiva(B):
+        B = -B
+        if not esDefinidaPositiva(B):
+            raise ValueError("B no es definida positiva: revisar homografías / cantidad de vistas")
+
     L = calculaCholesky(B)
-
-
 
     K = inversa(L.T)
     K = K / K[2,2]
@@ -460,9 +469,9 @@ def obtenerPose2D(Hj,K):
 
     lamb = 1/ norma(Kinv_c1,2)
 
-    # La homografía se estima salvo un factor de escala, que puede ser negativo. 
-    # Elegimos el signo de λ que deja al tablero delante de la cámara, 
-    # porque la otra solución ubicaría al tablero detrás del plano imagen y no es físicamente válida.
+    # La homografía se calcula a un factor de escala, que puede ser negativo. 
+    # Elegimos el signo de lambda que deja al tablero delante de la cámara, 
+    # porque la otra solución ubicaría al tablero detrás del plano imagen.
 
     if Kinv_c3[2] < 0:
         lamb = -lamb
